@@ -1,7 +1,7 @@
-import { ActivityFeed } from "@/components/dashboard/activity-feed";
-import { FunnelChart } from "@/components/dashboard/funnel-chart";
+import { DashboardActivityFeed } from "@/components/dashboard/dashboard-activity-feed";
 import { KpiCard } from "@/components/dashboard/kpi-card";
-import { RevenueChart } from "@/components/dashboard/revenue-chart";
+import { StageFunnelChart } from "@/components/dashboard/stage-funnel-chart";
+import { TrendChart } from "@/components/dashboard/trend-chart";
 import {
   Card,
   CardContent,
@@ -9,7 +9,10 @@ import {
   CardHeader,
   CardTitle,
 } from "@/components/ui/card";
-import { createClient } from "@/lib/supabase/server";
+import { getActiveAgency } from "@/lib/auth/agency-context";
+import { requireSession } from "@/lib/auth/session";
+import { getDashboardSnapshot } from "@/lib/analytics/dashboard";
+import { formatUsdFromCents } from "@/lib/format";
 import { isSupabaseConfigured } from "@/lib/env";
 
 import { createAgency } from "./agency-actions";
@@ -18,17 +21,59 @@ import { CreateAgencyForm } from "./create-agency-form";
 export const dynamic = "force-dynamic";
 
 export default async function DashboardPage() {
-  let agencies: { id: string; name: string; slug: string }[] = [];
-  if (isSupabaseConfigured()) {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("agencies")
-      .select("id,name,slug")
-      .order("created_at", { ascending: false });
-    agencies = data ?? [];
+  if (!isSupabaseConfigured()) {
+    return (
+      <Card className="glass-panel border-amber-500/30 bg-amber-500/5">
+        <CardHeader>
+          <CardTitle>Finish Supabase setup</CardTitle>
+          <CardDescription>
+            Add keys to <code className="text-xs">.env.local</code> to enable
+            auth, RLS-backed queries, and agency creation.
+          </CardDescription>
+        </CardHeader>
+      </Card>
+    );
   }
 
-  const activeAgency = agencies[0];
+  const ctx = await requireSession();
+  const agencyCtx = await getActiveAgency(ctx);
+
+  if (!agencyCtx) {
+    return (
+      <Card className="glass-panel border-border/50">
+        <CardHeader>
+          <CardTitle>Create your first agency</CardTitle>
+          <CardDescription>
+            Multi-tenant isolation is enforced with Row Level Security. You
+            will be added as owner automatically.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          <CreateAgencyForm action={createAgency} />
+        </CardContent>
+      </Card>
+    );
+  }
+
+  const snapshot = await getDashboardSnapshot({
+    supabase: agencyCtx.supabase,
+    agencyId: agencyCtx.agencyId,
+  });
+
+  const funnelChartData = snapshot.series.funnel.map((f) => ({
+    stage: f.stage.replaceAll("_", " "),
+    count: f.count,
+  }));
+
+  const callsSeries = snapshot.series.callsOverTime.map((p) => ({
+    date: p.date.slice(5),
+    count: p.count,
+  }));
+
+  const contentSeries = snapshot.series.contentOverTime.map((p) => ({
+    date: p.date.slice(5),
+    count: p.views + Math.floor(p.engagement / 1000),
+  }));
 
   return (
     <div className="space-y-8">
@@ -38,111 +83,125 @@ export default async function DashboardPage() {
             Intelligence overview
           </h1>
           <p className="text-muted-foreground mt-2 max-w-2xl text-sm leading-relaxed md:text-base">
-            Centralize revenue, pipeline, content, and team signals. Phase 1
-            ships the shell, auth, tenant model, and visualization-ready
-            analytics.
+            Live metrics for <span className="text-foreground font-medium">{agencyCtx.agency.name}</span>.
+            Connect GoHighLevel and run a sync to populate CRM charts; webhooks keep the board fresh.
           </p>
         </div>
-        {activeAgency ? (
-          <div className="glass-panel rounded-xl border border-border/50 px-4 py-3 text-sm">
-            <p className="text-muted-foreground text-xs uppercase tracking-wider">
-              Active workspace
-            </p>
-            <p className="font-medium tracking-tight">{activeAgency.name}</p>
-          </div>
-        ) : null}
+        <div className="glass-panel rounded-xl border border-border/50 px-4 py-3 text-sm">
+          <p className="text-muted-foreground text-xs uppercase tracking-wider">
+            Active workspace
+          </p>
+          <p className="font-medium tracking-tight">{agencyCtx.agency.name}</p>
+        </div>
       </div>
 
-      {!isSupabaseConfigured() ? (
-        <Card className="glass-panel border-amber-500/30 bg-amber-500/5">
-          <CardHeader>
-            <CardTitle>Finish Supabase setup</CardTitle>
-            <CardDescription>
-              Add keys to <code className="text-xs">.env.local</code> to enable
-              auth, RLS-backed queries, and agency creation.
-            </CardDescription>
-          </CardHeader>
-        </Card>
-      ) : agencies.length === 0 ? (
-        <Card className="glass-panel border-border/50">
-          <CardHeader>
-            <CardTitle>Create your first agency</CardTitle>
-            <CardDescription>
-              Multi-tenant isolation is enforced with Row Level Security. You
-              will be added as owner automatically.
-            </CardDescription>
-          </CardHeader>
-          <CardContent>
-            <CreateAgencyForm action={createAgency} />
-          </CardContent>
-        </Card>
-      ) : null}
-
-      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+      <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-5">
         <KpiCard
-          title="MRR"
-          value="$128.4k"
-          subtitle="Normalized demo metric"
-          trend={{ label: "+6.4% vs last month", positive: true }}
+          title="Total leads"
+          value={String(snapshot.kpis.totalLeads)}
+          subtitle="Across mirrored pipelines"
           delay={0}
         />
         <KpiCard
-          title="Cash collected (MTD)"
-          value="$94.2k"
-          trend={{ label: "On pace vs forecast", positive: true }}
+          title="Pipeline value"
+          value={formatUsdFromCents(snapshot.kpis.pipelineValueCents)}
+          subtitle="Sum of opportunity values"
           delay={0.05}
         />
         <KpiCard
           title="Active clients"
-          value={activeAgency ? "24" : "—"}
-          subtitle={activeAgency ? "Across pipelines" : "Create an agency to track"}
+          value={String(snapshot.kpis.activeClients)}
+          subtitle="status = active"
           delay={0.1}
         />
         <KpiCard
-          title="Pipeline value"
-          value="$512k"
-          trend={{ label: "Weighted across stages", positive: true }}
+          title="Tasks due"
+          value={String(snapshot.kpis.tasksDue)}
+          subtitle="Open tasks past due date"
           delay={0.15}
+        />
+        <KpiCard
+          title="Calls logged"
+          value={String(snapshot.kpis.callsCompleted)}
+          subtitle="Sales calls with a timestamp"
+          delay={0.2}
         />
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
         <div className="min-h-0 lg:col-span-2">
-          <RevenueChart />
+          <TrendChart
+            title="New leads (14 days)"
+            subtitle="Created timestamps across all pipelines in this agency."
+            points={snapshot.series.leadsOverTime.map((p) => ({
+              date: p.date.slice(5),
+              count: p.count,
+            }))}
+            valueLabel="Leads"
+            gradientId="leadsFill"
+          />
         </div>
         <div className="min-h-0">
-          <FunnelChart />
+          <StageFunnelChart
+            title="Pipeline funnel"
+            subtitle="Counts by internal stage for this agency."
+            data={funnelChartData}
+          />
         </div>
       </div>
 
       <div className="grid gap-4 lg:grid-cols-3">
-        <div className="grid gap-4 sm:grid-cols-2 lg:col-span-2 lg:grid-cols-2">
-          <KpiCard
-            title="Show rate"
-            value="68%"
-            trend={{ label: "+3 pts vs trailing 30d", positive: true }}
-            delay={0}
-          />
-          <KpiCard
-            title="Close rate"
-            value="29%"
-            trend={{ label: "Setter-assisted deals", positive: true }}
-            delay={0.05}
-          />
-          <KpiCard
-            title="Conversion rate"
-            value="4.8%"
-            subtitle="Lead → booked call"
-            delay={0.1}
-          />
-          <KpiCard
-            title="Active students"
-            value="312"
-            subtitle="Programs in delivery"
-            delay={0.15}
+        <div className="min-h-0 lg:col-span-2">
+          <TrendChart
+            title="Sales calls (14 days)"
+            subtitle="Calls with a started_at timestamp."
+            points={callsSeries}
+            valueLabel="Calls"
+            gradientId="callsFill"
           />
         </div>
-        <ActivityFeed />
+        <div className="min-h-0">
+          <TrendChart
+            title="Content performance (14 days)"
+            subtitle="Views + engagement/1000 across client-linked analytics rows."
+            points={contentSeries}
+            valueLabel="Index"
+            gradientId="contentFill"
+          />
+        </div>
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-3">
+        <div className="lg:col-span-2">
+          <Card className="glass-panel border-border/50">
+            <CardHeader>
+              <CardTitle>Upcoming / overdue tasks</CardTitle>
+              <CardDescription>
+                Open tasks with due_at in the past (first 8 shown).
+              </CardDescription>
+            </CardHeader>
+            <CardContent>
+              {snapshot.feed.tasksSample.length === 0 ? (
+                <p className="text-muted-foreground text-sm">No overdue open tasks.</p>
+              ) : (
+                <ul className="text-sm">
+                  {snapshot.feed.tasksSample.map((t) => (
+                    <li
+                      key={t.id}
+                      className="border-border/50 flex justify-between border-b py-2 last:border-0"
+                    >
+                      <span>{t.title}</span>
+                      <span className="text-muted-foreground text-xs">
+                        {t.due_at ? new Date(t.due_at).toLocaleString() : ""}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </CardContent>
+          </Card>
+        </div>
+        <DashboardActivityFeed items={snapshot.feed.items} />
       </div>
     </div>
   );

@@ -377,7 +377,8 @@ CREATE POLICY "profiles_update_own"
 CREATE POLICY "agencies_select"
   ON public.agencies FOR SELECT
   USING (
-    EXISTS (
+    owner_id = (SELECT auth.uid())
+    OR EXISTS (
       SELECT 1 FROM public.agency_members m
       WHERE m.agency_id = agencies.id AND m.user_id = (SELECT auth.uid())
     )

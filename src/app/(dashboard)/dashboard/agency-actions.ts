@@ -36,14 +36,26 @@ export async function createAgency(
   const base = slugify(name);
   const slug = `${base}-${Math.random().toString(36).slice(2, 6)}`;
 
-  const { error } = await supabase.from("agencies").insert({
-    name,
-    slug,
-    owner_id: user.id,
-  });
+  const { data: agency, error } = await supabase
+    .from("agencies")
+    .insert({
+      name,
+      slug,
+      owner_id: user.id,
+    })
+    .select("id")
+    .single();
 
   if (error) {
     return { error: error.message };
+  }
+
+  if (agency?.id) {
+    await supabase.from("user_preferences").upsert({
+      user_id: user.id,
+      active_agency_id: agency.id,
+      updated_at: new Date().toISOString(),
+    });
   }
 
   revalidatePath("/dashboard");
