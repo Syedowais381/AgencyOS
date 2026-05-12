@@ -27,6 +27,7 @@ const moveSchema = z.object({
   agencyId: z.string().uuid(),
   leadId: z.string().uuid(),
   toStage: stages,
+  toExternalStageId: z.string().optional(),
 });
 
 export async function moveLeadToStage(formData: FormData) {
@@ -34,6 +35,8 @@ export async function moveLeadToStage(formData: FormData) {
     agencyId: String(formData.get("agencyId") ?? ""),
     leadId: String(formData.get("leadId") ?? ""),
     toStage: String(formData.get("toStage") ?? ""),
+    toExternalStageId:
+      String(formData.get("toExternalStageId") ?? "").trim() || undefined,
   });
   if (!parsed.success) {
     throw new Error(parsed.error.message);
@@ -45,7 +48,7 @@ export async function moveLeadToStage(formData: FormData) {
   const { data: lead, error: lErr } = await ctx.supabase
     .from("leads")
     .select(
-      "id, stage, external_id, pipeline_id, pipelines!inner(agency_id, external_id)",
+      "id, stage, external_id, pipeline_id, metadata, pipelines!inner(agency_id, external_id)",
     )
     .eq("id", parsed.data.leadId)
     .maybeSingle();
@@ -61,10 +64,22 @@ export async function moveLeadToStage(formData: FormData) {
 
   const fromStage = lead.stage as LeadStage;
 
+  const existingMeta = (lead.metadata as Record<string, unknown> | null) ?? {};
+  const nextMeta = {
+    ...existingMeta,
+    ghl: {
+      ...((existingMeta.ghl as Record<string, unknown> | undefined) ?? {}),
+      ...(parsed.data.toExternalStageId
+        ? { pipelineStageId: parsed.data.toExternalStageId }
+        : {}),
+    },
+  };
+
   const { error: uErr } = await ctx.supabase
     .from("leads")
     .update({
       stage: parsed.data.toStage,
+      metadata: nextMeta,
       updated_at: new Date().toISOString(),
       last_activity_at: new Date().toISOString(),
     })
@@ -98,15 +113,19 @@ export async function moveLeadToStage(formData: FormData) {
     .maybeSingle();
 
   if (integ?.id && lead.external_id && pipeline.external_id) {
-    const { data: extStage } = await ctx.supabase
-      .from("crm_stage_map")
-      .select("external_stage_id")
-      .eq("agency_id", parsed.data.agencyId)
-      .eq("external_pipeline_id", pipeline.external_id)
-      .eq("internal_stage", parsed.data.toStage)
-      .maybeSingle();
+    const externalStageId =
+      parsed.data.toExternalStageId ??
+      (
+        await ctx.supabase
+          .from("crm_stage_map")
+          .select("external_stage_id")
+          .eq("agency_id", parsed.data.agencyId)
+          .eq("external_pipeline_id", pipeline.external_id)
+          .eq("internal_stage", parsed.data.toStage)
+          .maybeSingle()
+      ).data?.external_stage_id;
 
-    if (extStage?.external_stage_id) {
+    if (externalStageId) {
       const admin = createAdminClient();
       const cred = await loadGhlCredential(admin, integ.id);
       const env = getServerEnv();
@@ -120,7 +139,7 @@ export async function moveLeadToStage(formData: FormData) {
       });
       try {
         await ghl.updateOpportunity(lead.external_id, {
-          pipelineStageId: extStage.external_stage_id,
+          pipelineStageId: externalStageId,
         });
       } catch (e) {
         console.error("[ghl] push stage failed", e);

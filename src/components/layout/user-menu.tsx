@@ -1,6 +1,6 @@
 "use client";
 
-import { useTransition } from "react";
+import { useRef, useTransition } from "react";
 import { LogOut, User } from "lucide-react";
 
 import { signOut } from "@/app/(dashboard)/actions";
@@ -36,6 +36,7 @@ export function UserMenu({
   name: string | null;
 }) {
   const label = name || email || "Account";
+  const signoutFormRef = useRef<HTMLFormElement | null>(null);
   const [pending, startTransition] = useTransition();
 
   return (
@@ -69,18 +70,19 @@ export function UserMenu({
           Profile
         </DropdownMenuItem>
         <DropdownMenuSeparator />
+        <form ref={signoutFormRef} action={signOut} />
         <DropdownMenuItem
           disabled={pending}
           className="gap-2 text-destructive focus:text-destructive"
           onSelect={(e) => {
             e.preventDefault();
             startTransition(() => {
-              void signOut();
+              signoutFormRef.current?.requestSubmit();
             });
           }}
         >
           <LogOut className="size-4" />
-          {pending ? "Signing out…" : "Sign out"}
+          {pending ? "Signing out..." : "Sign out"}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

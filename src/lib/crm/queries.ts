@@ -15,6 +15,7 @@ export type LeadRow = {
   pipeline_id: string;
   external_id: string | null;
   updated_at: string | null;
+  metadata: Record<string, unknown> | null;
 };
 
 export type PipelineRow = {
@@ -46,7 +47,7 @@ export async function fetchCrmBoard(opts: {
   const { data: leads, error: lErr } = await supabase
     .from("leads")
     .select(
-      "id, name, email, phone, stage, value_cents, score, pipeline_id, external_id, updated_at",
+      "id, name, email, phone, stage, value_cents, score, pipeline_id, external_id, updated_at, metadata",
     )
     .in("pipeline_id", ids)
     .order("updated_at", { ascending: false });

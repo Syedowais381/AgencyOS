@@ -106,33 +106,39 @@ export default async function CrmPage({
       : board.pipelines[0]!.id;
   const selectedPipeline = board.pipelines.find((p) => p.id === pipelineId) ?? null;
 
-  const stageColumns: { id: LeadStage; label: string }[] = [
-    { id: "new", label: "New" },
-    { id: "contacted", label: "Contacted" },
-    { id: "qualified", label: "Qualified" },
-    { id: "appointment_set", label: "Appointment Set" },
-    { id: "showed", label: "Showed" },
-    { id: "won", label: "Won" },
-    { id: "lost", label: "Lost" },
+  const stageColumns: {
+    id: string;
+    label: string;
+    internalStage: LeadStage;
+    externalStageId?: string | null;
+  }[] = [
+    { id: "new", label: "New", internalStage: "new" },
+    { id: "contacted", label: "Contacted", internalStage: "contacted" },
+    { id: "qualified", label: "Qualified", internalStage: "qualified" },
+    { id: "appointment_set", label: "Appointment Set", internalStage: "appointment_set" },
+    { id: "showed", label: "Showed", internalStage: "showed" },
+    { id: "won", label: "Won", internalStage: "won" },
+    { id: "lost", label: "Lost", internalStage: "lost" },
   ];
 
   if (selectedPipeline?.external_id) {
     const { data: stageMap } = await agencyCtx.supabase
       .from("crm_stage_map")
-      .select("internal_stage, label")
+      .select("internal_stage, label, external_stage_id")
       .eq("agency_id", agencyCtx.agencyId)
       .eq("external_pipeline_id", selectedPipeline.external_id)
-      .order("updated_at", { ascending: false });
+      .order("label", { ascending: true });
 
-    const labelsByStage = new Map<LeadStage, string>();
-    for (const row of stageMap ?? []) {
-      const stage = row.internal_stage as LeadStage;
-      if (!labelsByStage.has(stage) && row.label) {
-        labelsByStage.set(stage, row.label);
+    if ((stageMap ?? []).length > 0) {
+      stageColumns.length = 0;
+      for (const row of stageMap ?? []) {
+        stageColumns.push({
+          id: `ext:${row.external_stage_id}`,
+          label: row.label ?? row.external_stage_id,
+          internalStage: row.internal_stage as LeadStage,
+          externalStageId: row.external_stage_id,
+        });
       }
-    }
-    for (const col of stageColumns) {
-      col.label = labelsByStage.get(col.id) ?? col.label;
     }
   }
 

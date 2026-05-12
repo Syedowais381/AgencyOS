@@ -41,6 +41,34 @@ function normalizeOpportunityFromWebhook(
   };
 }
 
+async function deleteMirroredOpportunity(opts: {
+  admin: ReturnType<typeof createAdminClient>;
+  agencyId: string;
+  opportunityId: string;
+}) {
+  const { admin, agencyId, opportunityId } = opts;
+  const { data: rows, error: leadErr } = await admin
+    .from("leads")
+    .select("id, pipeline_id")
+    .eq("external_id", opportunityId);
+  if (leadErr) throw leadErr;
+  if (!rows?.length) return;
+
+  const pipelineIds = rows.map((r) => r.pipeline_id);
+  const { data: pipelines, error: pErr } = await admin
+    .from("pipelines")
+    .select("id")
+    .eq("agency_id", agencyId)
+    .in("id", pipelineIds);
+  if (pErr) throw pErr;
+  const owned = new Set((pipelines ?? []).map((p) => p.id));
+  const leadIdsToDelete = rows.filter((r) => owned.has(r.pipeline_id)).map((r) => r.id);
+  if (!leadIdsToDelete.length) return;
+
+  const { error: delErr } = await admin.from("leads").delete().in("id", leadIdsToDelete);
+  if (delErr) throw delErr;
+}
+
 function extractLocationId(root: Record<string, unknown>): string {
   const data = asRecord(root.data ?? root);
   return String(
@@ -122,7 +150,26 @@ export async function processGhlWebhookDelivery(opts: {
     .eq("event_id", eventId);
 
   try {
-    if (
+    if (type === "OpportunityDelete") {
+      const opp = normalizeOpportunityFromWebhook(payload);
+      if (opp?.id) {
+        await deleteMirroredOpportunity({
+          admin,
+          agencyId: integration.agency_id,
+          opportunityId: opp.id,
+        });
+      }
+      await insertActivityEvent(admin, {
+        agency_id: integration.agency_id,
+        actor_id: null,
+        type: "webhook_opportunity_delete",
+        title: "Opportunity deleted in GoHighLevel",
+        body: opp?.name ?? opp?.id ?? "Opportunity",
+        metadata: { webhookType: type, opportunityId: opp?.id ?? null },
+        entity_type: "lead",
+        entity_id: null,
+      });
+    } else if (
       type.includes("Opportunity") ||
       type === "OpportunityCreate" ||
       type === "OpportunityUpdate"

@@ -34,14 +34,21 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-const DEFAULT_STAGES: { id: LeadStage; label: string }[] = [
-  { id: "new", label: "New" },
-  { id: "contacted", label: "Contacted" },
-  { id: "qualified", label: "Qualified" },
-  { id: "appointment_set", label: "Appt set" },
-  { id: "showed", label: "Showed" },
-  { id: "won", label: "Won" },
-  { id: "lost", label: "Lost" },
+type StageColumnDef = {
+  id: string;
+  label: string;
+  internalStage: LeadStage;
+  externalStageId?: string | null;
+};
+
+const DEFAULT_STAGES: StageColumnDef[] = [
+  { id: "new", label: "New", internalStage: "new" },
+  { id: "contacted", label: "Contacted", internalStage: "contacted" },
+  { id: "qualified", label: "Qualified", internalStage: "qualified" },
+  { id: "appointment_set", label: "Appt set", internalStage: "appointment_set" },
+  { id: "showed", label: "Showed", internalStage: "showed" },
+  { id: "won", label: "Won", internalStage: "won" },
+  { id: "lost", label: "Lost", internalStage: "lost" },
 ];
 
 function DraggableLeadCard({
@@ -104,7 +111,7 @@ function StageColumn({
   count,
   children,
 }: {
-  stage: LeadStage;
+  stage: string;
   label: string;
   count: number;
   children: React.ReactNode;
@@ -148,7 +155,7 @@ export function CrmWorkspace({
   agencyId: string;
   pipelineId: string;
   initialLeads: LeadRow[];
-  stageColumns?: { id: LeadStage; label: string }[];
+  stageColumns?: StageColumnDef[];
 }) {
   const stages = stageColumns?.length ? stageColumns : DEFAULT_STAGES;
   const leadsInPipeline = initialLeads.filter((l) => l.pipeline_id === pipelineId);
@@ -194,12 +201,26 @@ export function CrmWorkspace({
     };
   }, [agencyId, selectedLeadId]);
 
+  function leadColumnId(lead: LeadRow) {
+    const ghlMeta = (lead.metadata as { ghl?: { pipelineStageId?: string } } | null)?.ghl;
+    const externalStageId = ghlMeta?.pipelineStageId;
+    if (externalStageId) {
+      const externalColumn = stages.find((s) => s.externalStageId === externalStageId);
+      if (externalColumn) return externalColumn.id;
+    }
+    const fallback = stages.find((s) => s.internalStage === lead.stage);
+    return fallback?.id ?? lead.stage;
+  }
+
   function onDragEnd(event: DragEndEvent) {
     const active = String(event.active.id);
     const over = event.over?.id ? String(event.over.id) : null;
     if (!active.startsWith("lead:") || !over?.startsWith("stage:")) return;
     const leadId = active.slice("lead:".length);
-    const toStage = over.slice("stage:".length) as LeadStage;
+    const columnId = over.slice("stage:".length);
+    const targetColumn = stages.find((s) => s.id === columnId);
+    if (!targetColumn) return;
+    const toStage = targetColumn.internalStage;
     const lead = optimisticLeads.find((l) => l.id === leadId);
     if (!lead || lead.stage === toStage) return;
 
@@ -209,6 +230,9 @@ export function CrmWorkspace({
       fd.set("agencyId", agencyId);
       fd.set("leadId", leadId);
       fd.set("toStage", toStage);
+      if (targetColumn.externalStageId) {
+        fd.set("toExternalStageId", targetColumn.externalStageId);
+      }
       await moveLeadToStage(fd);
     });
   }
@@ -243,7 +267,7 @@ export function CrmWorkspace({
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div className="flex gap-3 overflow-x-auto pb-2">
           {stages.map((col) => {
-            const cards = optimisticLeads.filter((l) => l.stage === col.id);
+            const cards = optimisticLeads.filter((l) => leadColumnId(l) === col.id);
             return (
               <StageColumn
                 key={col.id}
