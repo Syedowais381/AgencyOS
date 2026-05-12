@@ -1,6 +1,6 @@
 import Link from "next/link";
-
 import { CrmWorkspace } from "@/components/crm/crm-workspace";
+
 import { Badge } from "@/components/ui/badge";
 import {
   Card,
@@ -12,6 +12,7 @@ import {
 import { getActiveAgency } from "@/lib/auth/agency-context";
 import { requireSession } from "@/lib/auth/session";
 import { fetchCrmBoard } from "@/lib/crm/queries";
+import type { LeadStage } from "@/lib/crm/guess-internal-stage";
 import { isSupabaseConfigured } from "@/lib/env";
 import { cn } from "@/lib/utils";
 
@@ -103,6 +104,37 @@ export default async function CrmPage({
     requested && board.pipelines.some((p) => p.id === requested)
       ? requested
       : board.pipelines[0]!.id;
+  const selectedPipeline = board.pipelines.find((p) => p.id === pipelineId) ?? null;
+
+  const stageColumns: { id: LeadStage; label: string }[] = [
+    { id: "new", label: "New" },
+    { id: "contacted", label: "Contacted" },
+    { id: "qualified", label: "Qualified" },
+    { id: "appointment_set", label: "Appointment Set" },
+    { id: "showed", label: "Showed" },
+    { id: "won", label: "Won" },
+    { id: "lost", label: "Lost" },
+  ];
+
+  if (selectedPipeline?.external_id) {
+    const { data: stageMap } = await agencyCtx.supabase
+      .from("crm_stage_map")
+      .select("internal_stage, label")
+      .eq("agency_id", agencyCtx.agencyId)
+      .eq("external_pipeline_id", selectedPipeline.external_id)
+      .order("updated_at", { ascending: false });
+
+    const labelsByStage = new Map<LeadStage, string>();
+    for (const row of stageMap ?? []) {
+      const stage = row.internal_stage as LeadStage;
+      if (!labelsByStage.has(stage) && row.label) {
+        labelsByStage.set(stage, row.label);
+      }
+    }
+    for (const col of stageColumns) {
+      col.label = labelsByStage.get(col.id) ?? col.label;
+    }
+  }
 
   return (
     <div className="space-y-6">
@@ -144,6 +176,7 @@ export default async function CrmPage({
         agencyId={agencyCtx.agencyId}
         pipelineId={pipelineId}
         initialLeads={board.leads}
+        stageColumns={stageColumns}
       />
     </div>
   );

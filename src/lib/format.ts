@@ -1,6 +1,6 @@
 export function formatUsdFromCents(cents: number) {
   const n = cents / 100;
-  return n.toLocaleString(undefined, {
+  return n.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
@@ -19,4 +19,11 @@ export function formatRelativeTime(iso: string) {
   if (hr < 48) return `${hr}h ago`;
   const d = Math.floor(hr / 24);
   return `${d}d ago`;
+}
+
+export function formatIsoUtc(value: string | null | undefined) {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return String(value);
+  return d.toISOString().replace("T", " ").replace("Z", " UTC");
 }

@@ -20,6 +20,7 @@ import {
   connectGoHighLevel,
   disconnectGoHighLevel,
   type GhlConnectState,
+  type GhlDisconnectState,
 } from "@/server/actions/ghl-integration";
 import {
   triggerGhlCrmSync,
@@ -44,6 +45,13 @@ export type SyncRunRow = {
   started_at: string;
   finished_at: string | null;
 };
+
+function formatIsoUtc(value: string | null): string {
+  if (!value) return "—";
+  const d = new Date(value);
+  if (Number.isNaN(d.getTime())) return value;
+  return d.toISOString().replace("T", " ").replace("Z", " UTC");
+}
 
 function healthBadgeVariant(
   health: string | null,
@@ -85,8 +93,12 @@ export function GhlIntegrationPanel({
     FormData
   >(triggerGhlCrmSync, {});
   const [copied, setCopied] = useState(false);
+  const [disconnectState, disconnectAction, disconnectPending] = useActionState<
+    GhlDisconnectState,
+    FormData
+  >(disconnectGoHighLevel, {});
 
-  const syncPending = fullPending || incrPending;
+  const syncPending = fullPending || incrPending || disconnectPending;
 
   const connectError = useMemo(() => {
     if (connectState.success) return null;
@@ -135,6 +147,27 @@ export function GhlIntegrationPanel({
           (RLS blocks direct reads). Webhooks are verified and deduplicated before
           writes.
         </CardDescription>
+        <ol className="text-muted-foreground list-decimal space-y-1.5 pl-5 text-xs leading-relaxed">
+          <li>
+            Set server env:{" "}
+            <code className="font-mono text-[11px]">INTEGRATION_ENCRYPTION_KEY</code>,{" "}
+            <code className="font-mono text-[11px]">SUPABASE_SERVICE_ROLE_KEY</code>
+            (local <span className="font-mono text-[11px]">.env.local</span> or Vercel
+            project settings).
+          </li>
+          <li>
+            In GHL: create a Private Integration token (PIT) with scopes that include
+            opportunities/pipelines for your sub-account.
+          </li>
+          <li>
+            Paste <span className="text-foreground font-medium">Location ID</span> and
+            token below, then <span className="text-foreground font-medium">Validate &amp; save</span>.
+          </li>
+          <li>
+            Copy the webhook URL into GHL (production needs a public HTTPS URL), then
+            run <span className="text-foreground font-medium">Full CRM sync</span>.
+          </li>
+        </ol>
       </CardHeader>
       <CardContent className="space-y-6 text-sm">
         {!encryptionReady ? (
@@ -189,15 +222,11 @@ export function GhlIntegrationPanel({
             </p>
             <p>
               <span className="text-foreground font-medium">Last sync</span>:{" "}
-              {integration.last_sync_at
-                ? new Date(integration.last_sync_at).toLocaleString()
-                : "—"}
+              {formatIsoUtc(integration.last_sync_at)}
             </p>
             <p className="sm:col-span-2">
               <span className="text-foreground font-medium">Token expiry</span>:{" "}
-              {integration.token_expires_at
-                ? new Date(integration.token_expires_at).toLocaleString()
-                : "—"}
+              {formatIsoUtc(integration.token_expires_at)}
             </p>
             {integration.last_error ? (
               <p className="text-destructive sm:col-span-2">
@@ -256,7 +285,7 @@ export function GhlIntegrationPanel({
                   <span className="capitalize">
                     {r.mode} · {r.status}
                   </span>
-                  <span>{new Date(r.started_at).toLocaleString()}</span>
+                  <span>{formatIsoUtc(r.started_at)}</span>
                 </li>
               ))}
             </ul>
@@ -339,12 +368,41 @@ export function GhlIntegrationPanel({
             </form>
 
             {integration ? (
-              <form action={disconnectGoHighLevel} className="pt-2">
+              <form
+                action={disconnectAction}
+                className="pt-2"
+                onSubmit={(e) => {
+                  const ok = window.confirm(
+                    "Disconnect GoHighLevel and remove encrypted credentials for this workspace?",
+                  );
+                  if (!ok) e.preventDefault();
+                }}
+              >
                 <input type="hidden" name="agencyId" value={agencyId} />
                 <input type="hidden" name="integrationId" value={integration.id} />
-                <Button type="submit" variant="destructive" size="sm">
-                  Disconnect & remove secrets
+                <Button
+                  type="submit"
+                  variant="destructive"
+                  size="sm"
+                  disabled={disconnectPending}
+                >
+                  {disconnectPending ? (
+                    <>
+                      <Loader2 className="mr-1 size-4 animate-spin" />
+                      Disconnecting...
+                    </>
+                  ) : (
+                    "Disconnect & remove secrets"
+                  )}
                 </Button>
+                {disconnectState.error ? (
+                  <p className="text-destructive mt-2 text-xs">{disconnectState.error}</p>
+                ) : null}
+                {disconnectState.success ? (
+                  <p className="text-primary mt-2 text-xs">
+                    Integration disconnected and credentials removed.
+                  </p>
+                ) : null}
               </form>
             ) : null}
           </div>

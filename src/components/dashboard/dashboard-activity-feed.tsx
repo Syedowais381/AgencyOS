@@ -3,7 +3,7 @@
 import { motion } from "framer-motion";
 import { Activity, Webhook, Wrench } from "lucide-react";
 
-import { formatRelativeTime } from "@/lib/format";
+import { formatIsoUtc } from "@/lib/format";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { ScrollArea } from "@/components/ui/scroll-area";
 import { Separator } from "@/components/ui/separator";
@@ -58,7 +58,7 @@ export function DashboardActivityFeed({ items }: { items: DashboardFeedItem[] })
                       <div className="flex items-start justify-between gap-2">
                         <p className="text-sm font-medium leading-none">{item.title}</p>
                         <span className="text-muted-foreground shrink-0 text-xs">
-                          {formatRelativeTime(item.created_at)}
+                          {formatIsoUtc(item.created_at)}
                         </span>
                       </div>
                       <p className="text-muted-foreground text-sm leading-snug">

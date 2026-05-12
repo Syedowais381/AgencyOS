@@ -22,6 +22,7 @@ const connectSchema = z.object({
 });
 
 export type GhlConnectState = { error?: string; success?: boolean };
+export type GhlDisconnectState = { error?: string; success?: boolean };
 
 export async function connectGoHighLevel(
   _prev: GhlConnectState,
@@ -134,30 +135,93 @@ export async function connectGoHighLevel(
   return { success: true };
 }
 
-export async function disconnectGoHighLevel(formData: FormData) {
-  const agencyId = String(formData.get("agencyId") ?? "");
-  const integrationId = String(formData.get("integrationId") ?? "");
-  if (!agencyId || !integrationId) throw new Error("Missing fields");
+const disconnectSchema = z.object({
+  agencyId: z.string().uuid(),
+  integrationId: z.string().uuid(),
+});
 
-  const ctx = await requireSession();
-  await requireAgencyAdmin(ctx, agencyId);
+export async function disconnectGoHighLevel(
+  _prev: GhlDisconnectState,
+  formData: FormData,
+): Promise<GhlDisconnectState> {
+  try {
+    const parsed = disconnectSchema.safeParse({
+      agencyId: String(formData.get("agencyId") ?? ""),
+      integrationId: String(formData.get("integrationId") ?? ""),
+    });
+    if (!parsed.success) {
+      return { error: parsed.error.issues.map((i) => i.message).join(", ") };
+    }
 
-  const admin = createAdminClient();
-  await admin.from("integration_credentials").delete().eq("integration_id", integrationId);
+    const ctx = await requireSession();
+    await requireAgencyAdmin(ctx, parsed.data.agencyId);
 
-  const { error } = await ctx.supabase
-    .from("integrations")
-    .update({
-      status: "disconnected",
-      health_status: "unknown",
-      external_location_id: null,
-      last_error: null,
-      updated_at: new Date().toISOString(),
-    })
-    .eq("id", integrationId)
-    .eq("agency_id", agencyId);
+    const admin = createAdminClient();
+    const { error: credErr } = await admin
+      .from("integration_credentials")
+      .delete()
+      .eq("integration_id", parsed.data.integrationId);
+    if (credErr) {
+      return { error: credErr.message };
+    }
 
-  if (error) throw new Error(error.message);
+    const { error } = await admin
+      .from("integrations")
+      .update({
+        status: "disconnected",
+        health_status: "unknown",
+        external_location_id: null,
+        last_error: null,
+        updated_at: new Date().toISOString(),
+      })
+      .eq("id", parsed.data.integrationId)
+      .eq("agency_id", parsed.data.agencyId);
 
-  revalidatePath("/dashboard/integrations");
+    if (error) {
+      return { error: error.message };
+    }
+
+    // Remove mirrored CRM rows from this provider so disconnected workspaces
+    // don't keep showing stale GHL data in Dashboard/CRM pages.
+    const { error: pipelineDeleteErr } = await admin
+      .from("pipelines")
+      .delete()
+      .eq("agency_id", parsed.data.agencyId)
+      .eq("external_source", "gohighlevel");
+    if (pipelineDeleteErr) {
+      return { error: pipelineDeleteErr.message };
+    }
+
+    const { error: stageMapDeleteErr } = await admin
+      .from("crm_stage_map")
+      .delete()
+      .eq("agency_id", parsed.data.agencyId);
+    if (stageMapDeleteErr) {
+      return { error: stageMapDeleteErr.message };
+    }
+
+    // Non-critical logging should never block disconnect UX.
+    try {
+      await insertActivityEvent(ctx.supabase, {
+        agency_id: parsed.data.agencyId,
+        actor_id: ctx.user.id,
+        type: "integration_disconnected",
+        title: "GoHighLevel disconnected",
+        body: "Credentials removed and sync disabled.",
+        metadata: { integrationId: parsed.data.integrationId },
+        entity_type: "integration",
+        entity_id: parsed.data.integrationId,
+      });
+    } catch (e) {
+      console.error("[ghl-disconnect] activity log failed", e);
+    }
+
+    revalidatePath("/dashboard/integrations");
+    revalidatePath("/dashboard");
+    revalidatePath("/dashboard/crm");
+    return { success: true };
+  } catch (e) {
+    const message = e instanceof Error ? e.message : "Failed to disconnect integration";
+    return { error: message };
+  }
 }

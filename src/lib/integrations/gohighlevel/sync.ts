@@ -7,10 +7,52 @@ import { guessInternalStageFromGhlStageName } from "@/lib/crm/guess-internal-sta
 import { decryptJson, type EncryptedPayload } from "@/lib/crypto/integration-secrets";
 import { upsertGhlOpportunityAsLead } from "@/lib/integrations/gohighlevel/apply-opportunity";
 import { GhlClient } from "@/lib/integrations/gohighlevel/client";
+import { GhlApiError } from "@/lib/integrations/gohighlevel/errors";
 import type { GhlStoredCredential } from "@/lib/integrations/gohighlevel/types";
 
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function normalizeSyncError(err: unknown): string {
+  if (err instanceof GhlApiError) {
+    const requestId = err.requestId ? ` (request_id: ${err.requestId})` : "";
+    const body = err.body?.trim();
+    if (body) {
+      return `${err.message}${requestId}: ${body}`;
+    }
+    return `${err.message}${requestId}`;
+  }
+  if (err instanceof Error) return err.message;
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") {
+    const maybe = err as {
+      message?: unknown;
+      error_description?: unknown;
+      details?: unknown;
+      hint?: unknown;
+      code?: unknown;
+      status?: unknown;
+    };
+    const msg =
+      typeof maybe.message === "string"
+        ? maybe.message
+        : typeof maybe.error_description === "string"
+          ? maybe.error_description
+          : null;
+    const extra = [maybe.code, maybe.details, maybe.hint, maybe.status]
+      .filter((v) => typeof v === "string" || typeof v === "number")
+      .map((v) => String(v))
+      .join(" | ");
+    if (msg && extra) return `${msg} (${extra})`;
+    if (msg) return msg;
+    try {
+      return JSON.stringify(err);
+    } catch {
+      return "Unexpected sync error";
+    }
+  }
+  return "Unknown sync error";
 }
 
 function toEncryptedPayload(row: {
@@ -163,9 +205,10 @@ export async function runGhlCrmSync(opts: {
         if (mErr) throw mErr;
       }
 
+      const syncStatus = mode === "incremental" ? "open" : "all";
       for await (const batch of ghl.searchAllOpportunities({
         pipelineId: p.id,
-        status: "all",
+        status: syncStatus,
       })) {
         for (const opp of batch) {
           await upsertGhlOpportunityAsLead({
@@ -208,7 +251,7 @@ export async function runGhlCrmSync(opts: {
 
     return { pipelinesUpserted, leadsUpserted };
   } catch (e) {
-    const message = e instanceof Error ? e.message : "Unknown error";
+    const message = normalizeSyncError(e);
     await supabaseUser
       .from("integration_sync_runs")
       .update({

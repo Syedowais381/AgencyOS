@@ -80,8 +80,7 @@ ALTER TABLE public.leads
   ADD COLUMN IF NOT EXISTS external_updated_at TIMESTAMPTZ;
 
 CREATE UNIQUE INDEX IF NOT EXISTS leads_pipeline_external_uid
-  ON public.leads (pipeline_id, external_id)
-  WHERE external_id IS NOT NULL;
+  ON public.leads (pipeline_id, external_id);
 
 CREATE INDEX IF NOT EXISTS idx_leads_external_updated ON public.leads (external_updated_at);
 
@@ -375,5 +374,4 @@ CREATE INDEX IF NOT EXISTS idx_integrations_location ON public.integrations (ext
   WHERE external_location_id IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS pipelines_agency_external_uid
-  ON public.pipelines (agency_id, external_id)
-  WHERE external_id IS NOT NULL;
+  ON public.pipelines (agency_id, external_id);

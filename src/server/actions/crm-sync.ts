@@ -7,6 +7,7 @@ import { encryptJson } from "@/lib/crypto/integration-secrets";
 import { requireAgencyMember } from "@/lib/auth/agency-context";
 import { requireSession } from "@/lib/auth/session";
 import { getServerEnv, isIntegrationEncryptionConfigured } from "@/lib/env.server";
+import { GhlApiError } from "@/lib/integrations/gohighlevel/errors";
 import { runGhlCrmSync } from "@/lib/integrations/gohighlevel/sync";
 import { createAdminClient } from "@/lib/supabase/admin";
 
@@ -17,6 +18,20 @@ const schema = z.object({
 });
 
 export type CrmSyncState = { error?: string; success?: boolean; stats?: string };
+
+function getActionErrorMessage(e: unknown): string {
+  if (e instanceof GhlApiError) {
+    const body = e.body?.trim();
+    return body ? `${e.message}: ${body}` : e.message;
+  }
+  if (e instanceof Error) return e.message;
+  if (typeof e === "string") return e;
+  if (e && typeof e === "object" && "message" in e) {
+    const m = (e as { message?: unknown }).message;
+    if (typeof m === "string") return m;
+  }
+  return "Sync failed";
+}
 
 export async function triggerGhlCrmSync(
   _prev: CrmSyncState,
@@ -74,7 +89,7 @@ export async function triggerGhlCrmSync(
       stats: `${stats.pipelinesUpserted} pipelines · ${stats.leadsUpserted} leads`,
     };
   } catch (e) {
-    const msg = e instanceof Error ? e.message : "Sync failed";
+    const msg = getActionErrorMessage(e);
     return { error: msg };
   }
 }

@@ -34,7 +34,7 @@ import {
 } from "@/components/ui/sheet";
 import { cn } from "@/lib/utils";
 
-const STAGES: { id: LeadStage; label: string }[] = [
+const DEFAULT_STAGES: { id: LeadStage; label: string }[] = [
   { id: "new", label: "New" },
   { id: "contacted", label: "Contacted" },
   { id: "qualified", label: "Qualified" },
@@ -143,11 +143,14 @@ export function CrmWorkspace({
   agencyId,
   pipelineId,
   initialLeads,
+  stageColumns,
 }: {
   agencyId: string;
   pipelineId: string;
   initialLeads: LeadRow[];
+  stageColumns?: { id: LeadStage; label: string }[];
 }) {
+  const stages = stageColumns?.length ? stageColumns : DEFAULT_STAGES;
   const leadsInPipeline = initialLeads.filter((l) => l.pipeline_id === pipelineId);
   const [optimisticLeads, addOptimistic] = useOptimistic(
     leadsInPipeline,
@@ -167,6 +170,11 @@ export function CrmWorkspace({
   const sensors = useSensors(
     useSensor(PointerSensor, { activationConstraint: { distance: 6 } }),
   );
+  const [mounted, setMounted] = useState(false);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
 
   useEffect(() => {
     if (!selectedLeadId) {
@@ -222,11 +230,19 @@ export function CrmWorkspace({
     });
   }
 
+  if (!mounted) {
+    return (
+      <div className="text-muted-foreground rounded-xl border border-border/50 p-4 text-sm">
+        Loading CRM workspace...
+      </div>
+    );
+  }
+
   return (
     <>
       <DndContext sensors={sensors} onDragEnd={onDragEnd}>
         <div className="flex gap-3 overflow-x-auto pb-2">
-          {STAGES.map((col) => {
+          {stages.map((col) => {
             const cards = optimisticLeads.filter((l) => l.stage === col.id);
             return (
               <StageColumn
